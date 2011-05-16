@@ -18,7 +18,11 @@
   height: @b - 1%;
   color: #000000 + @c;
 }
- 
+
 .named-args2 {
   .mixin2(3px, @c: 100);
+}
+
+.named-args3 {
+  .mixin2(@b: 30%, @c: #123456);
 }
