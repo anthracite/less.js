@@ -800,7 +800,7 @@ less.Parser = function Parser(env) {
                 // selector for now.
                 //
                 call: function () {
-                    var elements = [], e, c, args, index = i, s = input.charAt(i);
+                    var elements = [], e, c, arg, args = [], name, value, index = i, s = input.charAt(i);
 
                     if (s !== '.' && s !== '#') { return }
 
@@ -808,7 +808,31 @@ less.Parser = function Parser(env) {
                         elements.push(new(tree.Element)(c, e));
                         c = $('>');
                     }
-                    $('(') && (args = $(this.entities.arguments)) && $(')');
+                    if ($('(')) {
+                        while (arg = $(this.expression)) {
+                            value = arg;
+                            name = null;
+
+                            // Variable
+                            if (arg.value.length = 1) {
+                                var val = arg.value[0];
+                                if (val instanceof tree.Variable) {
+                                    if ($(':')) {
+                                        if (value = $(this.expression)) {
+                                            name = val.name;
+                                        } else {
+                                            throw new(Error)("Expected value");
+                                        }
+                                    }
+                                }
+                            }
+
+                            args.push({ name: name, value: value });
+
+                            if (! $(',')) { break }
+                        }
+                        if (! $(')')) throw new(Error)("Expected )");
+                    }
 
                     if (elements.length > 0 && ($(';') || peek('}'))) {
                         return new(tree.mixin.Call)(elements, args, index);
@@ -925,6 +949,10 @@ less.Parser = function Parser(env) {
                 e = $(/^(?:[.#]?|:*)(?:[\w-]|\\(?:[a-fA-F0-9]{1,6} ?|[^a-fA-F0-9]))+/) || $('*') || $(this.attribute) || $(/^\([^)@]+\)/);
 
                 if (e) { return new(tree.Element)(c, e) }
+
+                if (c.value && c.value[0] === '&') {
+                  return new(tree.Element)(c, null);
+                }
             },
 
             //
@@ -939,10 +967,18 @@ less.Parser = function Parser(env) {
             combinator: function () {
                 var match, c = input.charAt(i);
 
-                if (c === '>' || c === '&' || c === '+' || c === '~') {
+                if (c === '>' || c === '+' || c === '~') {
                     i++;
                     while (input.charAt(i) === ' ') { i++ }
                     return new(tree.Combinator)(c);
+                } else if (c === '&') {
+                    match = '&';
+                    i++;
+                    if(input.charAt(i) === ' ') {
+                        match = '& ';
+                    }
+                    while (input.charAt(i) === ' ') { i++ }
+                    return new(tree.Combinator)(match);
                 } else if (c === ':' && input.charAt(i + 1) === ':') {
                     i += 2;
                     while (input.charAt(i) === ' ') { i++ }
@@ -1664,7 +1700,7 @@ tree.Directive.prototype = {
 tree.Element = function (combinator, value) {
     this.combinator = combinator instanceof tree.Combinator ?
                       combinator : new(tree.Combinator)(combinator);
-    this.value = value.trim();
+    this.value = value ? value.trim() : "";
 };
 tree.Element.prototype.toCSS = function (env) {
     return this.combinator.toCSS(env || {}) + this.value;
@@ -1673,6 +1709,8 @@ tree.Element.prototype.toCSS = function (env) {
 tree.Combinator = function (value) {
     if (value === ' ') {
         this.value = ' ';
+    } else if (value === '& ') {
+        this.value = '& ';
     } else {
         this.value = value ? value.trim() : "";
     }
@@ -1682,6 +1720,7 @@ tree.Combinator.prototype.toCSS = function (env) {
         ''  : '',
         ' ' : ' ',
         '&' : '',
+        '& ' : ' ',
         ':' : ' :',
         '::': '::',
         '+' : env.compress ? '+' : ' + ',
@@ -1921,11 +1960,19 @@ tree.mixin.Definition.prototype = {
     rulesets:  function ()     { return this.parent.rulesets.apply(this) },
 
     eval: function (env, args) {
-        var frame = new(tree.Ruleset)(null, []), context, _arguments = [];
+        var frame = new(tree.Ruleset)(null, []), context, _arguments = [], arg;
 
         for (var i = 0, val; i < this.params.length; i++) {
+            arg = args && args[i];
+            if (arg && arg.name) {
+                frame.rules.unshift(new(tree.Rule)(arg.name, arg.value.eval(env)));
+                args.splice(i, 1);
+                i--;
+                continue;
+            }
+
             if (this.params[i].name) {
-                if (val = (args && args[i]) || this.params[i].value) {
+                if (val = (arg && arg.value) || this.params[i].value) {
                     frame.rules.unshift(new(tree.Rule)(this.params[i].name, val.eval(env)));
                 } else {
                     throw { message: "wrong number of arguments for " + this.name +
@@ -1934,7 +1981,7 @@ tree.mixin.Definition.prototype = {
             }
         }
         for (var i = 0; i < Math.max(this.params.length, args && args.length); i++) {
-            _arguments.push(args[i] || this.params[i].value);
+            _arguments.push((args[i] && args[i].value) || this.params[i].value);
         }
         frame.rules.unshift(new(tree.Rule)('@arguments', new(tree.Expression)(_arguments).eval(env)));
 
@@ -1952,7 +1999,7 @@ tree.mixin.Definition.prototype = {
 
         for (var i = 0; i < len; i++) {
             if (!this.params[i].name) {
-                if (args[i].eval(env).toCSS() != this.params[i].value.eval(env).toCSS()) {
+                if (args[i].value.eval(env).toCSS() != this.params[i].value.eval(env).toCSS()) {
                     return false;
                 }
             }
@@ -2183,11 +2230,7 @@ tree.Ruleset.prototype = {
             if (context.length === 0) {
                 paths = this.selectors.map(function (s) { return [s] });
             } else {
-                for (var s = 0; s < this.selectors.length; s++) {
-                    for (var c = 0; c < context.length; c++) {
-                        paths.push(context[c].concat([this.selectors[s]]));
-                    }
-                }
+                this.joinSelectors( paths, context, this.selectors );
             }
         }
 
@@ -2237,6 +2280,44 @@ tree.Ruleset.prototype = {
         css.push(rulesets);
 
         return css.join('') + (env.compress ? '\n' : '');
+    },
+
+    joinSelectors: function( paths, context, selectors ) {
+        for (var s = 0; s < selectors.length; s++) {
+            this.joinSelector(paths, context, selectors[s]);
+        }
+    },
+
+    joinSelector: function( paths, context, selector ) {
+        var before = [], after = [], beforeElements = [], afterElements = [], hasParentSelector = false, el;
+
+        for (var i = 0; i < selector.elements.length; i++) {
+            el = selector.elements[i];
+            if (el.combinator.value[0] === '&') {
+                hasParentSelector = true;
+            }
+            if(!hasParentSelector) {
+                beforeElements.push(el);
+            } else {
+                afterElements.push(el);
+            }
+        }
+
+        if(!hasParentSelector) {
+            afterElements = beforeElements;
+            beforeElements = [];
+        }
+
+        if(beforeElements.length > 0) {
+            before.push(new (tree.Selector)(beforeElements));
+        }
+        if(afterElements.length > 0) {
+            after.push(new (tree.Selector)(afterElements));
+        }
+
+        for (var c = 0; c < context.length; c++) {
+            paths.push(before.concat(context[c]).concat(after));
+        }
     }
 };
 })(require('less/tree'));
